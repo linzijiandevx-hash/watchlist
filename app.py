@@ -1,20 +1,85 @@
 from flask import Flask, render_template
 from markupsafe import escape
 from flask import url_for
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-name = "lzj"
-movies = [
-    {"title": "Totoro", "year": 1988},
-    {"title": "Ponyo", "year": 2008},
-    {"title": "Spirited Away", "year": 2001},
-]
+import click
+
+from pathlib import Path
+
+
 
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + str(Path(app.root_path) / 'data.db')
+
+class Base(DeclarativeBase):
+    pass
+
+db = SQLAlchemy(app, model_class=Base)
+
+class User(db.Model):
+    __tablename__ = 'users'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(20))
+
+class Movie(db.Model):
+    __tablename__ = 'movies'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(20))
+    year: Mapped[int] = mapped_column(String(4))
+
+@app.cli.command('init-db')
+@click.option('--drop', is_flag=True, help='Create after drop.')
+def init_datebase(drop):
+    if drop:
+        db.drop_all()
+    db.create_all()
+    click.echo('Initialized the database.')
+
+
 
 @app.route('/')
 def index():
-    return render_template('index.html', name=name, movies=movies)
+    user = db.session.execute(select(User)).scalar()
+    movies = db.session.execute(select(Movie)).scalars().all()
+    return render_template('index.html', user=user, movies=movies)
+
+@app.cli.command()
+def forge():
+    '''
+    Generate fake data
+    '''
+    db.drop_all()
+    db.create_all()
+    
+    name = "lzj"
+    movies = [
+        {'title': 'My Neighbor Totoro', 'year': '1988'},
+        {'title': 'Dead Poets Society', 'year': '1989'},
+        {'title': 'A Perfect World', 'year': '1993'},
+        {'title': 'Leon', 'year': '1994'},
+        {'title': 'Mahjong', 'year': '1996'},
+        {'title': 'Swallowtail Butterfly', 'year': '1996'},
+        {'title': 'King of Comedy', 'year': '1999'},
+        {'title': 'Devils on the Doorstep', 'year': '1999'},
+        {'title': 'WALL-E', 'year': '2008'},
+        {'title': 'The Pork of Music', 'year': '2012'},
+    ]
+
+    user = User(name=name)
+    db.session.add(user)
+    for m in movies:
+        movie = Movie(title=m['title'],year=m['year'])
+        db.session.add(movie)
+    
+    db.session.commit()
+    click.echo('Done')
+
+
+
 
 # 一个函数可以绑定多个路由
 @app.route('/index')
