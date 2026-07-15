@@ -1,6 +1,6 @@
 from flask import Flask, render_template
 from markupsafe import escape
-from flask import url_for
+from flask import url_for, request, redirect, flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import String, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -12,7 +12,7 @@ from pathlib import Path
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + str(Path(app.root_path) / 'data.db')
-
+app.config['SECRET_KEY'] = 'dev'
 class Base(DeclarativeBase):
     pass
 
@@ -48,8 +48,23 @@ def page_not_found(error):
     return render_template('404.html'), 404
 
 
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 def index():
+    if request.method == 'POST':  # 判断是否是 POST 请求
+        # 获取表单数据
+        title = request.form.get('title')  # 传入表单对应输入字段的 name 值
+        year = request.form.get('year')
+        # 验证数据
+        if not title or not year or len(year) > 4 or len(title) > 60:
+            flash('Invalid input.')  # 显示错误提示
+            return redirect(url_for('index'))  # 重定向回主页
+        # 保存表单数据到数据库
+        movie = Movie(title=title, year=year)  # 创建记录
+        db.session.add(movie)  # 添加到数据库会话
+        db.session.commit()  # 提交数据库会话
+        flash('Item created.')  # 显示成功创建的提示
+        return redirect(url_for('index'))  # 重定向回主页
+
     movies = db.session.execute(select(Movie)).scalars().all()
     return render_template('index.html', movies=movies)
 
@@ -83,6 +98,32 @@ def forge():
     
     db.session.commit()
     click.echo('Done')
+
+@app.route('/movie/edit/<int:movie_id>', methods=['GET', 'POST'])
+def edit(movie_id):
+    movie = db.get_or_404(Movie, movie_id)
+
+    if request.method == 'POST':
+        title = request.form.get('title').strip()
+        year = request.form.get('year').strip()
+        if not title or not year or len(year) > 4 or len(title) > 60:
+            flash('Invalid input')
+            return redirect(url_for('edit', movie_id=movie_id))
+
+        movie.title = title
+        movie.year = year
+        db.session.commit()
+        flash('Item updated')
+        return redirect(url_for('index'))
+    return render_template('edit.html', movie=movie)
+
+@app.route('/movie/delete/<int:movie_id>', methods=['POST'])  # 限定只接受 POST 请求
+def delete(movie_id):
+    movie = db.get_or_404(Movie, movie_id)  # 获取电影记录
+    db.session.delete(movie)  # 删除对应的记录
+    db.session.commit()  # 提交数据库会话
+    flash('Item deleted.')
+    return redirect(url_for('index'))  # 重定向回主页
 
 # 一个函数可以绑定多个路由
 @app.route('/home')
