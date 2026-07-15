@@ -4,7 +4,8 @@ from flask import url_for, request, redirect, flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import String, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import LoginManager,login_user,UserMixin,logout_user,login_required,current_user
 import click
 
 from pathlib import Path
@@ -13,21 +14,37 @@ from pathlib import Path
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + str(Path(app.root_path) / 'data.db')
 app.config['SECRET_KEY'] = 'dev'
+
+login_maager=LoginManager(app)
+
+@login_maager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
 class Base(DeclarativeBase):
     pass
 
 db = SQLAlchemy(app, model_class=Base)
 
-class User(db.Model):
+class User(db.Model, UserMixin):
     __tablename__ = 'users'
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(20))
+    username: Mapped[str] = mapped_column(String(20))
+    password_hash: Mapped[str | None] = mapped_column(String(128))
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    def validate_password(self, password):
+        return check_password_hash(self.password_hash, password)
 
 class Movie(db.Model):
     __tablename__ = 'movies'
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(20))
     year: Mapped[int] = mapped_column(String(4))
+
+
 
 @app.cli.command('init-db')
 @click.option('--drop', is_flag=True, help='Create after drop.')
@@ -52,6 +69,8 @@ def page_not_found(error):
 def index():
     if request.method == 'POST':  # 判断是否是 POST 请求
         # 获取表单数据
+        if not current_user.is_authenticated: # 如果用户未登录
+            return redirect(url_for('login')) # 重定向回登录页``
         title = request.form.get('title')  # 传入表单对应输入字段的 name 值
         year = request.form.get('year')
         # 验证数据
@@ -90,7 +109,8 @@ def forge():
         {'title': 'The Pork of Music', 'year': '2012'},
     ]
 
-    user = User(name=name)
+    user = User(name=name, username='admin')
+    user.set_password('helloflask')
     db.session.add(user)
     for m in movies:
         movie = Movie(title=m['title'],year=m['year'])
@@ -99,7 +119,76 @@ def forge():
     db.session.commit()
     click.echo('Done')
 
+@app.cli.command('admin')
+@click.option('--username', prompt=True, help='The username used to login.')
+@click.option('--password', prompt=True, hide_input=True,help='The password used to login.')
+def admin(username, password):
+    db.create_all()
+
+    user = db.session.execute(select(User)).scalar()
+    if user is not None:
+        click.echo('Update user ...')
+        user.name = username
+        user.set_password(password)
+    else:
+        click.echo('Create user ...')
+        user = User(username=username, name='admin')
+        user.set_password(password)
+        db.session.add(user)
+    db.session.commit()
+    click.echo('Done')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+
+        if not username or not password:
+            flash('Invalid input.')
+            return redirect(url_for('login'))
+
+        user = db.session.execute(select(User).filter_by(username=username)).scalar()
+        # 验证密码是否一致
+        if user is not None and user.validate_password(password):
+            login_user(user)
+            flash('Login success')
+            return redirect(url_for('index'))
+
+        flash('Invalid username or password.') # 验证失败，显示错误消息
+        return redirect(url_for('login')) # 重定向回登录页
+
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('Logout success')
+    return redirect(url_for('index'))
+
+@app.route('/settings', methods=['GET','POST'])
+@login_required
+def settings():
+    if request.method == 'POST':
+        name = request.form.get('name')
+
+        if not name or len(name) > 20:
+            flash('Invalid input.')
+            return redirect(url_for('settings'))
+
+        current_user.name = name # 更新当前用户的名字
+        db.session.commit()
+        flash('Settings updated.')
+        return redirect(url_for('index'))
+
+    return render_template('settings.html')
+
+
+
+
 @app.route('/movie/edit/<int:movie_id>', methods=['GET', 'POST'])
+@login_required
 def edit(movie_id):
     movie = db.get_or_404(Movie, movie_id)
 
@@ -118,6 +207,7 @@ def edit(movie_id):
     return render_template('edit.html', movie=movie)
 
 @app.route('/movie/delete/<int:movie_id>', methods=['POST'])  # 限定只接受 POST 请求
+@login_required
 def delete(movie_id):
     movie = db.get_or_404(Movie, movie_id)  # 获取电影记录
     db.session.delete(movie)  # 删除对应的记录
