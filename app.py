@@ -2,14 +2,12 @@ from flask import Flask, render_template
 from markupsafe import escape
 from flask import url_for
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import String
+from sqlalchemy import String, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 import click
 
 from pathlib import Path
-
-
 
 
 app = Flask(__name__)
@@ -39,13 +37,21 @@ def init_datebase(drop):
     db.create_all()
     click.echo('Initialized the database.')
 
+@app.context_processor
+def inject_user():
+    user = db.session.execute(select(User)).scalar()
+    return dict(user=user)
+
+
+@app.errorhandler(404)
+def page_not_found(error):
+    return render_template('404.html'), 404
 
 
 @app.route('/')
 def index():
-    user = db.session.execute(select(User)).scalar()
     movies = db.session.execute(select(Movie)).scalars().all()
-    return render_template('index.html', user=user, movies=movies)
+    return render_template('index.html', movies=movies)
 
 @app.cli.command()
 def forge():
@@ -54,7 +60,7 @@ def forge():
     '''
     db.drop_all()
     db.create_all()
-    
+
     name = "lzj"
     movies = [
         {'title': 'My Neighbor Totoro', 'year': '1988'},
@@ -78,11 +84,7 @@ def forge():
     db.session.commit()
     click.echo('Done')
 
-
-
-
 # 一个函数可以绑定多个路由
-@app.route('/index')
 @app.route('/home')
 def hello_home():
     return '<h1>HelloHome</h1>'
@@ -102,6 +104,8 @@ def test_url_for():
     # 下面这个调用传入了多余的关键字参数，它们会被作为查询字符串附加到 URL 后面。
     print(url_for('test_url_for', num=2))  # 输出：/test?num=2
     return 'Test page'
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)
